@@ -2,9 +2,9 @@ name: Weekly Apartment Price & AI Report Sync
 
 on:
   schedule:
-    # 매주 월요일 아침 8시(한국시간) 실행
+    # 한국시간(KST) 기준 매주 월요일 오전 8시 자동 실행 (UTC 일요일 23:00)
     - cron: '0 23 * * 0'
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch: # 필요 시 언제든 수동 실행 가능
 
 jobs:
   build:
