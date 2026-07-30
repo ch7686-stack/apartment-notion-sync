@@ -21,7 +21,7 @@ notion_headers = {
     "Notion-Version": "2022-06-28"
 }
 
-collected_deals = []  # 주간 보고서 생성을 위한 실거래 수집 데이터 보관함
+collected_deals = []
 
 # ==========================================
 # 2. 노션 데이터 중복 체크 및 개별 거래 등록 (실거래가 DB)
@@ -49,7 +49,6 @@ def check_duplicate(apt_name, deal_date, price, floor):
 def add_to_notion(district, dong_name, apt_name, area, price, floor, deal_date, household_count=None):
     full_apt_name = f"[{district}] {apt_name}"
     
-    # 보고서 분석용 데이터 수집
     collected_deals.append({
         "district": district, "dong": dong_name, "apt": apt_name,
         "price": price, "area": area, "household": household_count or 0, "date": deal_date
@@ -167,7 +166,8 @@ def generate_ai_report(deals):
     """
 
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # Gemini 최신 모델 API 엔드포인트 경로로 수정 완료
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         res = requests.post(url, json=payload, timeout=30)
         if res.status_code == 200:
@@ -202,7 +202,6 @@ def publish_report_to_notion(report_text):
                 }
             })
 
-    # 주간 보고서 전용 DB로 발행
     data = {
         "parent": {"database_id": REPORT_DATABASE_ID},
         "properties": {
@@ -261,7 +260,6 @@ def fetch_and_sync_real_price():
                     day = item.find('dealDay').text.strip().zfill(2) if item.find('dealDay') is not None else item.find('일').text.strip().zfill(2)
                     deal_date = f"{year}-{month}-{day}"
 
-                    # 조건: 전용 84㎡ 이상 & 15억 이하
                     if area >= 84.0 and price <= 150000:
                         household_cnt = get_household_count(dist_name, dong_name, apt_name)
                         add_to_notion(dist_name, dong_name, apt_name, round(area, 1), price, floor, deal_date, household_cnt)
@@ -271,7 +269,6 @@ def fetch_and_sync_real_price():
         except Exception as e:
             print(f"❌ 데이터 수집 에러: {e}")
 
-    # 구별/동별 시세 분석 주간 AI 보고서 생성 및 전용 노션 DB 전송
     print("\n🤖 Gemini AI 구별·동별 주간 마케팅 보고서 생성 중...")
     report = generate_ai_report(collected_deals)
     if report:
