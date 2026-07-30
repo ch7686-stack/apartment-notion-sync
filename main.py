@@ -99,7 +99,7 @@ def get_household_count(district, dong_name, apt_name):
     return None
 
 # ==========================================
-# 4. Gemini AI 구별/동별 시세 분석 주간 보고서 생성 (429 재시도 로직 포함)
+# 4. Gemini AI 구별/동별 시세 분석 주간 보고서 생성
 # ==========================================
 def generate_ai_report(deals):
     if not deals:
@@ -166,27 +166,24 @@ def generate_ai_report(deals):
     보고서 작성 시 제목과 강조 표시를 활용하여 읽기 쉽고 명확한 전문적인 보고서 톤으로 작성해 주세요.
     """
 
-    # 안정적인 엔드포인트 세팅 및 429 오류 시 최대 3회 자동 재시도
-    models = ["gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-2.0-flash"]
-    
-    for model_name in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        
-        for attempt in range(2):
-            try:
-                res = requests.post(url, json=payload, timeout=30)
-                if res.status_code == 200:
-                    return res.json()['candidates'][0]['content']['parts'][0]['text']
-                elif res.status_code == 429:
-                    print(f"⏳ [{model_name}] API 요청 한도 초과(429). 15초 후 재시도합니다... ({attempt+1}/2)")
-                    time.sleep(15)
-                else:
-                    print(f"⚠️ [{model_name}] 오류 ({res.status_code}). 다른 모델로 전환 시도...")
-                    break
-            except Exception as e:
-                print(f"❌ AI 보고서 생성 에러: {e}")
+    # gemini-2.0-flash 모델 단일 지정
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+    for attempt in range(3):
+        try:
+            res = requests.post(url, json=payload, timeout=30)
+            if res.status_code == 200:
+                return res.json()['candidates'][0]['content']['parts'][0]['text']
+            elif res.status_code == 429:
+                print(f"⏳ Gemini API 요도 한도 초과(429). 20초 대기 후 재시도합니다... ({attempt+1}/3)")
+                time.sleep(20)
+            else:
+                print(f"❌ Gemini API 오류: {res.status_code} - {res.text}")
                 break
+        except Exception as e:
+            print(f"❌ AI 보고서 생성 에러: {e}")
+            break
 
     return None
 
