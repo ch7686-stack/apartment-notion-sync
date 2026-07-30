@@ -49,6 +49,12 @@ def check_duplicate(apt_name, deal_date, price, floor):
 def add_to_notion(district, dong_name, apt_name, area, price, floor, deal_date, household_count=None):
     full_apt_name = f"[{district}] {apt_name}"
     
+    # 보고서 생성을 위해 모든 수집 건 보관
+    collected_deals.append({
+        "district": district, "dong": dong_name, "apt": apt_name,
+        "price": price, "area": area, "household": household_count or 0, "date": deal_date
+    })
+
     if check_duplicate(full_apt_name, deal_date, price, floor):
         print(f"⏩ [중복 스킵] {full_apt_name} ({price:,}만원)")
         return
@@ -70,10 +76,6 @@ def add_to_notion(district, dong_name, apt_name, area, price, floor, deal_date, 
         res = requests.post(url, headers=notion_headers, json={"parent": {"database_id": DATABASE_ID}, "properties": properties}, timeout=10)
         if res.status_code == 200:
             print(f"✅ [노션 등록] {full_apt_name} | {price:,}만원 | {deal_date}")
-            collected_deals.append({
-                "district": district, "dong": dong_name, "apt": apt_name,
-                "price": price, "area": area, "household": household_count or 0, "date": deal_date
-            })
     except Exception as e:
         print(f"❌ 노션 등록 에러: {e}")
 
@@ -97,11 +99,11 @@ def get_household_count(district, dong_name, apt_name):
     return None
 
 # ==========================================
-# 4. Gemini AI 주간 마케팅 보고서 생성
+# 4. Gemini AI 구별/동별 시세 분석 주간 보고서 생성
 # ==========================================
 def generate_ai_report(deals):
     if not deals:
-        print("ℹ️ 이번 실행 시 신규 거래 데이터가 없어 주간 보고서를 생성하지 않습니다.")
+        print("ℹ️ 수집된 실거래 데이터가 없어 보고서를 생성하지 않습니다.")
         return None
 
     if not GEMINI_API_KEY:
@@ -109,31 +111,62 @@ def generate_ai_report(deals):
         return None
 
     total_count = len(deals)
-    avg_price = sum(d['price'] for d in deals) // total_count
-    max_deal = max(deals, key=lambda x: x['price'])
     
+    # 구별 데이터 분류 및 통계
+    songpa_deals = [d for d in deals if d['district'] == '송파구']
+    gangdong_deals = [d for d in deals if d['district'] == '강동구']
+
+    def get_stats(d_list):
+        if not d_list:
+            return "거래 없음"
+        avg_p = sum(d['price'] for d in d_list) // len(d_list)
+        max_d = max(d_list, key=lambda x: x['price'])
+        min_d = min(d_list, key=lambda x: x['price'])
+        return f"거래 {len(d_list)}건 | 평균가: {avg_p:,}만원 | 최고가: {max_d['apt']}({max_d['price']:,}만원) | 최저가: {min_d['apt']}({min_d['price']:,}만원)"
+
+    # 동별 그룹화
+    dong_summary = {}
+    for d in deals:
+        key = f"{d['district']} {d['dong']}"
+        dong_summary.setdefault(key, []).append(d['price'])
+
+    dong_text_list = []
+    for dong, prices in dong_summary.items():
+        avg_p = sum(prices) // len(prices)
+        dong_text_list.append(f"- {dong}: 총 {len(prices)}건 거래 | 평균가 {avg_p:,}만원 (최고 {max(prices):,}만원 / 최저 {min(prices):,}만원)")
+
     data_summary = f"""
-    - 주간 신규 거래 건수: 총 {total_count}건
-    - 평균 거래가: {avg_price:,}만원
-    - 최고가 거래: {max_deal['district']} {max_deal['apt']} ({max_deal['price']:,}만원, {max_deal['household']}세대)
-    - 주요 거래 상세 목록:
-    """ + "\n".join([f"  * [{d['district']} {d['dong']}] {d['apt']} | {d['price']:,}만원 | {d['household']}세대" for d in deals[:15]])
+    [전체 요약]
+    - 총 수집 거래건수: {total_count}건
+
+    [구별 시세 동향]
+    - 송파구 현황: {get_stats(songpa_deals)}
+    - 강동구 현황: {get_stats(gangdong_deals)}
+
+    [동별 상세 시세 현황]
+    """ + "\n".join(dong_text_list[:15]) + f"""
+
+    [주요 단지 상세 거래 샘플]
+    """ + "\n".join([f"  * [{d['district']} {d['dong']}] {d['apt']} ({d['area']}m²) | {d['price']:,}만원 | {d['household']}세대 | 계약일: {d['date']}" for d in deals[:20]])
 
     prompt = f"""
     당신은 통신사 마케팅 전략 수립을 담당하는 부동산 데이터 분석 전문가입니다.
-    아래 주간 아파트 실거래가 데이터를 바탕으로, 통신 마케팅 팀에 공유할 '주간 부동산 & 타깃 마케팅 브리핑 보고서'를 작성해 주세요.
+    아래 수집된 송파구 및 강동구 아파트 실거래가 데이터를 바탕으로, 통신 마케팅 팀에 공유할 '주간 부동산 시세 동향 & 타깃 마케팅 브리핑 보고서'를 작성해 주세요.
 
-    [수집 데이터 요약]
+    [수집 데이터 정보]
     {data_summary}
 
-    [보고서 작성 목차]
-    1. 📊 주간 핵심 시장 동향 요약 (3줄 요약)
-    2. 🔥 주요 활발 거래 동/단지 분석 (세대수 및 가격 특징)
-    3. 💡 통신사 마케팅 인사이트 & 추천 실행 전략
-       - 이사/결합 상품(인터넷+TV) 집중 판촉 타깃 단지/지역 추천
-       - 현장 BTL 프로모션 및 매장 영업 가이드
+    [보고서 필수 작성 목차]
+    1. 📊 주간 핵심 시장 요약 (3줄 핵심 요약)
+    2. 🏙️ 구별 · 동별 시세 및 거래 흐름 분석
+       - 송파구 vs 강동구 구별 시세격차 및 특징 비교
+       - 거래가 활발한 동별(예: 가락동, 고덕동 등) 평균 시세 수준 및 주도 단지 분석
+       - 대단지(세대수 높은 아파트) 위주의 거래 가격대 형성 분석
+    3. 💡 통신사 마케팅 실행 전략 (BTL 및 결합상품 영업)
+       - 이사 수요가 많아 인터넷+TV 결합 상품 집중 판촉이 필요한 추천 타깃 동 및 단지
+       - 인근 매장/영업 인력 투입을 위한 현장 프로모션 가이드
 
-    가독성 좋게 단락 구분을 활용하여 전문적이고 명확한 톤으로 작성해 주세요.
+    보고서 작성 시 제목과 강조 표시를 활용하여 읽기 쉽고 명확한 전문적인 보고서 톤으로 작성해 주세요.
     """
 
     try:
@@ -143,9 +176,9 @@ def generate_ai_report(deals):
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            print(f"❌ Gemini API 오류 응답: {res.status_code} - {res.text}")
+            print(f"❌ Gemini API 오류: {res.status_code} - {res.text}")
     except Exception as e:
-        print(f"❌ AI 보고서 생성 중 예외 발생: {e}")
+        print(f"❌ AI 보고서 생성 에러: {e}")
     return None
 
 # ==========================================
@@ -156,7 +189,7 @@ def publish_report_to_notion(report_text):
         return
 
     today_str = datetime.now().strftime("%Y년 %m월 %d일")
-    title = f"📈 [주간 브리핑] 송파/강동 부동산 실거래 & 마케팅 인사이트 ({today_str})"
+    title = f"📈 [주간 시세 리포트] 송파/강동 구별·동별 시세 분석 & 마케팅 전략 ({today_str})"
 
     url = "https://api.notion.com/v1/pages"
     
@@ -183,7 +216,7 @@ def publish_report_to_notion(report_text):
     try:
         res = requests.post(url, headers=notion_headers, json=data, timeout=15)
         if res.status_code == 200:
-            print(f"\n🎉 [주간 보고서 발행 성공] '{title}' 노션 추가 완료!")
+            print(f"\n🎉 [주간 보고서 발행 성공] '{title}' 노션 등록 완료!")
         else:
             print(f"❌ 보고서 노션 발행 실패: {res.text[:100]}")
     except Exception as e:
@@ -240,8 +273,8 @@ def fetch_and_sync_real_price():
         except Exception as e:
             print(f"❌ 데이터 수집 에러: {e}")
 
-    # 모든 거래 수집 후 AI 주간 보고서 생성 및 노션 전송
-    print("\n🤖 Gemini AI 주간 마케팅 보고서 생성 중...")
+    # 구별/동별 분석 포함 주간 AI 보고서 생성 및 노션 전송
+    print("\n🤖 Gemini AI 구별·동별 주간 마케팅 보고서 생성 중...")
     report = generate_ai_report(collected_deals)
     if report:
         publish_report_to_notion(report)
