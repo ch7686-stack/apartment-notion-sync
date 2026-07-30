@@ -9,10 +9,10 @@ import os
 # 1. 사용자 설정 정보 및 보안 키 환경변수 로드
 # ==========================================
 NOTION_TOKEN = "ntn_n9230455858ahP4EMhkrguf0ld3JV7xXfM2hA9FQ1Ywbzj"
-DATABASE_ID = "3ac2262d943280919d6ac501b9b9a8c7"
-PUBLIC_DATA_KEY = "eee7f8f94d68563652f1330f65ec1ddb5e03a16c585a20159864fe8b1abc136f"
+DATA_DATABASE_ID = "3ac2262d943280919d6ac501b9b9a8c7"    # 아파트 실거래가 수집용 DB
+REPORT_DATABASE_ID = "3ad2262d943280cba18ed23ab11440c5"  # 주간 마케팅 보고서 전용 DB
 
-# GitHub Secrets에서 가져오는 Gemini API 키
+PUBLIC_DATA_KEY = "eee7f8f94d68563652f1330f65ec1ddb5e03a16c585a20159864fe8b1abc136f"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 notion_headers = {
@@ -21,13 +21,13 @@ notion_headers = {
     "Notion-Version": "2022-06-28"
 }
 
-collected_deals = []  # 보고서 생성을 위한 수집 데이터 보관함
+collected_deals = []  # 주간 보고서 생성을 위한 실거래 수집 데이터 보관함
 
 # ==========================================
-# 2. 노션 데이터 중복 체크 및 개별 거래 등록
+# 2. 노션 데이터 중복 체크 및 개별 거래 등록 (실거래가 DB)
 # ==========================================
 def check_duplicate(apt_name, deal_date, price, floor):
-    url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+    url = f"https://api.notion.com/v1/databases/{DATA_DATABASE_ID}/query"
     payload = {
         "filter": {
             "and": [
@@ -49,7 +49,7 @@ def check_duplicate(apt_name, deal_date, price, floor):
 def add_to_notion(district, dong_name, apt_name, area, price, floor, deal_date, household_count=None):
     full_apt_name = f"[{district}] {apt_name}"
     
-    # 보고서 생성을 위해 모든 수집 건 보관
+    # 보고서 분석용 데이터 수집
     collected_deals.append({
         "district": district, "dong": dong_name, "apt": apt_name,
         "price": price, "area": area, "household": household_count or 0, "date": deal_date
@@ -73,11 +73,11 @@ def add_to_notion(district, dong_name, apt_name, area, price, floor, deal_date, 
         properties["세대수"] = {"number": household_count}
 
     try:
-        res = requests.post(url, headers=notion_headers, json={"parent": {"database_id": DATABASE_ID}, "properties": properties}, timeout=10)
+        res = requests.post(url, headers=notion_headers, json={"parent": {"database_id": DATA_DATABASE_ID}, "properties": properties}, timeout=10)
         if res.status_code == 200:
-            print(f"✅ [노션 등록] {full_apt_name} | {price:,}만원 | {deal_date}")
+            print(f"✅ [실거래 노션 등록] {full_apt_name} | {price:,}만원 | {deal_date}")
     except Exception as e:
-        print(f"❌ 노션 등록 에러: {e}")
+        print(f"❌ 실거래 노션 등록 에러: {e}")
 
 # ==========================================
 # 3. 네이버 부동산 세대수 수집
@@ -111,8 +111,6 @@ def generate_ai_report(deals):
         return None
 
     total_count = len(deals)
-    
-    # 구별 데이터 분류 및 통계
     songpa_deals = [d for d in deals if d['district'] == '송파구']
     gangdong_deals = [d for d in deals if d['district'] == '강동구']
 
@@ -124,7 +122,6 @@ def generate_ai_report(deals):
         min_d = min(d_list, key=lambda x: x['price'])
         return f"거래 {len(d_list)}건 | 평균가: {avg_p:,}만원 | 최고가: {max_d['apt']}({max_d['price']:,}만원) | 최저가: {min_d['apt']}({min_d['price']:,}만원)"
 
-    # 동별 그룹화
     dong_summary = {}
     for d in deals:
         key = f"{d['district']} {d['dong']}"
@@ -182,7 +179,7 @@ def generate_ai_report(deals):
     return None
 
 # ==========================================
-# 5. 노션에 주간 보고서 페이지 발행
+# 5. 전용 보고서 DB에 주간 보고서 페이지 발행
 # ==========================================
 def publish_report_to_notion(report_text):
     if not report_text:
@@ -205,10 +202,11 @@ def publish_report_to_notion(report_text):
                 }
             })
 
+    # 주간 보고서 전용 DB로 발행
     data = {
-        "parent": {"database_id": DATABASE_ID},
+        "parent": {"database_id": REPORT_DATABASE_ID},
         "properties": {
-            "아파트명": {"title": [{"text": {"content": title}}]}
+            "이름": {"title": [{"text": {"content": title}}]}
         },
         "children": blocks[:90]
     }
@@ -216,7 +214,7 @@ def publish_report_to_notion(report_text):
     try:
         res = requests.post(url, headers=notion_headers, json=data, timeout=15)
         if res.status_code == 200:
-            print(f"\n🎉 [주간 보고서 발행 성공] '{title}' 노션 등록 완료!")
+            print(f"\n🎉 [주간 보고서 발행 성공] '{title}' 보고서 전용 DB 등록 완료!")
         else:
             print(f"❌ 보고서 노션 발행 실패: {res.text[:100]}")
     except Exception as e:
@@ -273,7 +271,7 @@ def fetch_and_sync_real_price():
         except Exception as e:
             print(f"❌ 데이터 수집 에러: {e}")
 
-    # 구별/동별 분석 포함 주간 AI 보고서 생성 및 노션 전송
+    # 구별/동별 시세 분석 주간 AI 보고서 생성 및 전용 노션 DB 전송
     print("\n🤖 Gemini AI 구별·동별 주간 마케팅 보고서 생성 중...")
     report = generate_ai_report(collected_deals)
     if report:
