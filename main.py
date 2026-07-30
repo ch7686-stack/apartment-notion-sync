@@ -166,8 +166,8 @@ def generate_ai_report(deals):
     """
 
     try:
-        # Gemini 최신 모델 API 엔드포인트 경로로 수정 완료
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # 최신 gemini-2.0-flash 모델 적용
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         res = requests.post(url, json=payload, timeout=30)
         if res.status_code == 200:
